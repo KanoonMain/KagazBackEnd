@@ -2,8 +2,6 @@ flask
 flask_restx
 flask_cors
 pandas
-tabulate
 python-docx
 docx2pdf
 pikepdf
-reportlab
