@@ -33,9 +33,9 @@ def getCatergoryDropDownData():
 
 def getDatafromTable(tableName):
     conn = getConnection()
-    sql = f'''SELECT * FROM '{tableName}'''
+    sql = f'''SELECT * FROM {tableName}'''
     df = pd.read_sql_query(sql, conn)
-    df = df.to_json(orient='records')
+    df = df.to_dict(orient='records')
     return df
 
 def updateRecordInTable(tableName: str, updateData: dict, whereCondition: dict):
@@ -185,7 +185,6 @@ def generateProtectedPDF(caseType, TemplateType, replacements):
         mainPath = os.getcwd() + '\\temp\\'
     else:
         mainPath = os.getcwd() + '\\temp\\'
-    print("Creating", mainPath)
     if not os.path.exists(mainPath):
         print("Created")
         os.mkdir(mainPath)
@@ -193,6 +192,8 @@ def generateProtectedPDF(caseType, TemplateType, replacements):
     doc.save(temp_docx)
     output_pdf = mainPath + str(today_date) + TemplateType.replace(' ', '_') + '.pdf'
     if sys.platform == "win32":
+        import pythoncom
+        pythoncom.CoInitialize()
         convert(temp_docx, output_pdf)
     else:
         # sudo apt-get install unoconv libreoffice
@@ -215,6 +216,7 @@ def generateProtectedPDF(caseType, TemplateType, replacements):
                 )
             )
         )
+    print("Completed")
     encrypted_pdf_stream.seek(0)
     return encrypted_pdf_stream, today_date
 

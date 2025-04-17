@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, request
 from flask_restx import Api, Resource, fields
 from flask_cors import CORS
 from flask import send_file
@@ -11,11 +11,38 @@ CORS(app)
 api = Api(app, version='1.0', title='Template Generator API',
           description='Template Generator App',
           )
-from template import getCatergoryDropDownData, getTemplateFeilds, generateProtectedPDF, updateTemplateFields, extractDataItems
+from template import getCatergoryDropDownData, getTemplateFeilds, generateProtectedPDF, updateTemplateFields, extractDataItems, getDatafromTable, updateRecordInTable
 
 ns = api.namespace('template', description='Template operations')
 
 
+# Models for Swagger docs
+update_model = api.model('UpdateModel', {
+    'updateData': fields.Raw(required=True, description='Fields to update'),
+    'whereCondition': fields.Raw(required=True, description='WHERE conditions to identify records'),
+})
+
+# GET Endpoint
+@ns.route('/<string:tableName>')
+class TableData(Resource):
+    def get(self, tableName):
+        """Fetch all data from the specified table"""
+        try:
+            data = getDatafromTable(tableName)
+            return data, 200
+        except Exception as e:
+            return {"error": str(e)}, 500
+
+    @ns.expect(update_model)
+    def put(self, tableName):
+        """Update records in the specified table"""
+        payload = request.json
+        updateData = payload.get('updateData', {})
+        whereCondition = payload.get('whereCondition', {})
+        if not updateData or not whereCondition:
+            return {"error": "Both 'updateData' and 'whereCondition' must be provided."}, 400
+        result = updateRecordInTable(tableName, updateData, whereCondition)
+        return result
 @ns.route('/list-templates')
 class TodoList(Resource):
     def get(self):
