@@ -5,9 +5,11 @@ from docx import Document
 from docx2pdf import convert
 from io import BytesIO
 from datetime import datetime
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
 import re
+import os
+import sys
+import subprocess
+import pikepdf
 
 
 def getCatergoryDropDownData():
@@ -29,6 +31,31 @@ def getCatergoryDropDownData():
     }
     return data
 
+def getDatafromTable(tableName):
+    conn = getConnection()
+    sql = f'''SELECT * FROM '{tableName}'''
+    df = pd.read_sql_query(sql, conn)
+    df = df.to_json(orient='records')
+    return df
+
+def updateRecordInTable(tableName: str, updateData: dict, whereCondition: dict):
+    conn = getConnection()
+    cursor = conn.cursor()
+    try:
+        set_clause = ", ".join([f"{key} = ?" for key in updateData.keys()])
+        set_values = list(updateData.values())
+        where_clause = " AND ".join([f"{key} = ?" for key in whereCondition.keys()])
+        where_values = list(whereCondition.values())
+        sql = f'''UPDATE {tableName} SET {set_clause} WHERE {where_clause}'''
+        values = set_values + where_values
+        cursor.execute(sql, values)
+        conn.commit()
+        return f"{cursor.rowcount} row(s) updated in '{tableName}'."
+    except Exception as e:
+        conn.rollback()
+        return "Error updating record:" + str(e)
+    finally:
+        conn.close()
 
 def getTemplateFeilds(caseType, TemplateType):
     conn = getConnection()
@@ -40,8 +67,83 @@ def getTemplateFeilds(caseType, TemplateType):
     df = df.iloc[0][0]
     df = df.replace("'", '"')
     df = json.loads(df)
-    print(df)
     return df
+
+
+def updateTemplateFields(caseType, TemplateType, updatedData):
+    conn = getConnection()
+    cursor = conn.cursor()
+    # Ensure the updated data is a JSON string with single quotes for SQL
+    updated_json = json.dumps(updatedData).replace('"', "'")
+    sql = f'''
+    UPDATE Templates
+    SET templateForm = '{updated_json}'
+    WHERE caseTypeid = (SELECT id FROM CaseTypes WHERE name = '{caseType}')
+      AND TemplateTypeid = (SELECT id FROM TemplateTypes WHERE templateName = '{TemplateType}')
+    '''
+    try:
+        cursor.execute(sql)
+        conn.commit()
+        return "Template updated successfully."
+    except Exception as e:
+        return "Error updating template:" + str(e)
+    finally:
+        conn.close()
+
+
+def extractDataItems(document, caseType, TemplateType):
+    doc = Document(document)
+    full_text = ''
+    for para in doc.paragraphs:
+        full_text += para.text + '\n'
+    placeholders = re.findall(r'\[([^\[\]]+)\]', full_text)
+    placeholdersData = {item: item for item in placeholders}
+    conn = getConnection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('SELECT id FROM CaseTypes WHERE name = ?', (caseType,))
+        case_row = cursor.fetchone()
+        if not case_row:
+            raise ValueError(f"CaseType '{caseType}' not found.")
+        caseTypeid = case_row[0]
+        cursor.execute('SELECT id FROM TemplateTypes WHERE templateName = ?', (TemplateType,))
+        template_row = cursor.fetchone()
+        TemplateTypeid = template_row[0]
+        cursor.execute(
+            '''
+            SELECT id FROM Templates 
+            WHERE caseTypeid = ? AND TemplateTypeid = ?
+            ''',
+            (caseTypeid, TemplateTypeid)
+        )
+        existing = cursor.fetchone()
+        if existing:
+            cursor.execute(
+                '''
+                UPDATE Templates 
+                SET templateData = ?, templateForm = ?
+                WHERE caseTypeid = ? AND TemplateTypeid = ?
+                ''',
+                (document, str(placeholdersData), caseTypeid, TemplateTypeid)
+            )
+            print("Existing template updated.")
+        else:
+            cursor.execute(
+                '''
+                INSERT INTO Templates (caseTypeid, TemplateTypeid, templateData, templateForm)
+                VALUES (?, ?, ?, ?)
+                ''',
+                (caseTypeid, TemplateTypeid, document, str(placeholdersData))
+            )
+            print("New template inserted.")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("Error in extractDataItems:", e)
+    finally:
+        conn.close()
+    return placeholdersData
+
 
 def replace_placeholders_in_paragraph(paragraph, replacements):
     # Combine runs into full text
@@ -63,7 +165,6 @@ def replace_placeholders_in_paragraph(paragraph, replacements):
         paragraph.add_run(full_text)
 
 
-
 def generateProtectedPDF(caseType, TemplateType, replacements):
     conn = getConnection()
     cursor = conn.cursor()
@@ -79,41 +180,43 @@ def generateProtectedPDF(caseType, TemplateType, replacements):
     doc = Document(doc_stream)
     for para in doc.paragraphs:
         replace_placeholders_in_paragraph(para, replacements)
-    # today_date = datetime.now().strftime("%Y-%m-%d")
-    temp_docx = "Filled_Rental_Agreement.docx"
+    today_date = datetime.now().strftime("%Y%m%d%H%M%S%f")[:-3]
+    if sys.platform == "win32":
+        mainPath = os.getcwd() + '\\temp\\'
+    else:
+        mainPath = os.getcwd() + '\\temp\\'
+    print("Creating", mainPath)
+    if not os.path.exists(mainPath):
+        print("Created")
+        os.mkdir(mainPath)
+    temp_docx = mainPath + str(today_date) + TemplateType.replace(' ', '_') + '.docx'
     doc.save(temp_docx)
-    # output_pdf = "Filled_Rental_Agreement_New.pdf"
-    # secured_pdf = "Secured_Rental_Agreement.pdf"
-    # convert(temp_docx, output_pdf)
-    # with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as temp_docx_file:
-    #     temp_docx_path = temp_docx_file.name
-    #     doc.save(temp_docx_path)
-    #
-    # # Step 2: Convert DOCX to PDF using docx2pdf and save to temp PDF
-    # with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_pdf_file:
-    #     temp_pdf_path = temp_pdf_file.name
-    #     convert(temp_docx_path, temp_pdf_path)
-    # # === Step 5: Apply PDF security (disable copy & print) ===
-    # with pikepdf.open(temp_pdf_path) as pdf:
-    #     encrypted_pdf_stream = BytesIO()
-    #     pdf.save(
-    #         encrypted_pdf_stream,
-    #         encryption=pikepdf.Encryption(
-    #             user="",
-    #             owner="secret",
-    #             allow=pikepdf.Permissions(
-    #                 extract=False,
-    #                 modify_annotation=False,
-    #                 modify_assembly=False,
-    #                 modify_form=False,
-    #                 modify_other=False,
-    #                 print_lowres=True,
-    #                 print_highres=True
-    #             )
-    #         )
-    #     )
-    # encrypted_pdf_stream.seek(0)
-    return True
+    output_pdf = mainPath + str(today_date) + TemplateType.replace(' ', '_') + '.pdf'
+    if sys.platform == "win32":
+        convert(temp_docx, output_pdf)
+    else:
+        # sudo apt-get install unoconv libreoffice
+        subprocess.run(['unoconv', '-f', 'pdf', '-o', output_pdf, temp_docx])
+    with pikepdf.open(output_pdf) as pdf:
+        encrypted_pdf_stream = BytesIO()
+        pdf.save(
+            encrypted_pdf_stream,
+            encryption=pikepdf.Encryption(
+                user="",
+                owner="secret",
+                allow=pikepdf.Permissions(
+                    extract=False,
+                    modify_annotation=False,
+                    modify_assembly=False,
+                    modify_form=False,
+                    modify_other=False,
+                    print_lowres=True,
+                    print_highres=True
+                )
+            )
+        )
+    encrypted_pdf_stream.seek(0)
+    return encrypted_pdf_stream, today_date
 
 
 if __name__ == '__main__':
