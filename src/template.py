@@ -31,6 +31,7 @@ def getCatergoryDropDownData():
     }
     return data
 
+
 def getDatafromTable(tableName):
     conn = getConnection()
     sql = f'''SELECT * FROM {tableName}'''
@@ -38,24 +39,96 @@ def getDatafromTable(tableName):
     df = df.to_dict(orient='records')
     return df
 
-def updateRecordInTable(tableName: str, updateData: dict, whereCondition: dict):
+
+def getDataSet():
+    conn = getConnection()
+    sql = f'''SELECT 'CaseTypes' as type, id, LOWER(REPLACE(name, ' ', '_')) AS value, name AS label
+            FROM CaseTypes
+            
+            UNION ALL
+            
+            SELECT 'TemplateTypes' as type,  id, LOWER(REPLACE(templateName, ' ', '_')) AS value, templateName AS label
+            FROM TemplateTypes;
+    '''
+    df = pd.read_sql_query(sql, conn)
+    df = df.to_dict(orient='records')
+    case_types = [item for item in df if item['type'] == 'CaseTypes']
+    template_types = [item for item in df if item['type'] == 'TemplateTypes']
+    return {
+        "CaseTypes": case_types,
+        "TemplateTypes": template_types
+    }
+
+
+def updateRecordInTable(table_name, records):
     conn = getConnection()
     cursor = conn.cursor()
-    try:
-        set_clause = ", ".join([f"{key} = ?" for key in updateData.keys()])
-        set_values = list(updateData.values())
-        where_clause = " AND ".join([f"{key} = ?" for key in whereCondition.keys()])
-        where_values = list(whereCondition.values())
-        sql = f'''UPDATE {tableName} SET {set_clause} WHERE {where_clause}'''
-        values = set_values + where_values
-        cursor.execute(sql, values)
-        conn.commit()
-        return f"{cursor.rowcount} row(s) updated in '{tableName}'."
-    except Exception as e:
-        conn.rollback()
-        return "Error updating record:" + str(e)
-    finally:
-        conn.close()
+
+    result = {
+        'updated': 0,
+        'added': 0
+    }
+
+    for record in records:
+        record_id = record.get('id')
+
+        if record.get('updated'):
+            if not record_id:
+                print("Missing 'id' for update operation.")
+                continue
+
+            # Check if the record exists
+            cursor.execute(f"SELECT 1 FROM {table_name} WHERE id=?", (record_id,))
+            exists = cursor.fetchone()
+
+            update_data = {k: v for k, v in record.items() if k not in ['id', 'updated', 'added']}
+            if not update_data:
+                print(f"No fields to update or insert for id {record_id}.")
+                continue
+
+            if exists:
+                # Update existing record
+                set_clause = ', '.join(f"{k}=?" for k in update_data)
+                values = list(update_data.values())
+                values.append(record_id)
+
+                query = f"UPDATE {table_name} SET {set_clause} WHERE id=?"
+                cursor.execute(query, values)
+
+                if cursor.rowcount > 0:
+                    result['updated'] += 1
+            else:
+                # Insert new record
+                insert_data = update_data.copy()
+                insert_data['id'] = record_id  # Include ID in the insert
+
+                columns = ', '.join(insert_data.keys())
+                placeholders = ', '.join(['?'] * len(insert_data))
+                values = list(insert_data.values())
+
+                query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+                cursor.execute(query, values)
+                result['added'] += 1
+
+        elif record.get('added'):
+            insert_data = {k: v for k, v in record.items() if k not in ['updated', 'added']}
+            if not insert_data:
+                print("No fields to insert.")
+                continue
+
+            columns = ', '.join(insert_data.keys())
+            placeholders = ', '.join(['?'] * len(insert_data))
+            values = list(insert_data.values())
+
+            query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+            cursor.execute(query, values)
+            result['added'] += 1
+
+    conn.commit()
+    conn.close()
+    return result
+
+
 
 def getTemplateFeilds(caseType, TemplateType):
     conn = getConnection()
@@ -64,10 +137,13 @@ def getTemplateFeilds(caseType, TemplateType):
     t.TemplateTypeid = ( SELECT id FROM TemplateTypes tt  where templateName = '{TemplateType}')
     '''
     df = pd.read_sql_query(sql, conn)
-    df = df.iloc[0][0]
-    df = df.replace("'", '"')
-    df = json.loads(df)
-    return df
+    if not df.empty:
+        df = df.iloc[0][0]
+        df = df.replace("'", '"')
+        df = json.loads(df)
+        return df
+    else:
+        return {}
 
 
 def updateTemplateFields(caseType, TemplateType, updatedData):
@@ -216,26 +292,28 @@ def generateProtectedPDF(caseType, TemplateType, replacements):
                 )
             )
         )
-    print("Completed")
-    encrypted_pdf_stream.seek(0)
-    return encrypted_pdf_stream, today_date
+        # print("Completed", encrypted_pdf_stream)
+        return encrypted_pdf_stream, today_date
 
 
 if __name__ == '__main__':
-    data = {
-        "LandlordFullName": "John Doe Landlord",
-        "LandlordAddress": "Random Landlord",
-        "Tenant Full Name": "John Doe Tenant ",
-        "Tenant Address": "Random Tenant’s ",
-        "Rental Property Address": "ABCD",
-        "Start Date": "16-04-2025",
-        "End Date": "16-04-2025",
-        "Amount": "1000",
-        "month/week": "Month",
-        "day": "5th",
-        "payment method": "NEFT",
-        "SecurityAmount": "10000",
-        "X": "10",
-        "number": "30"
-    }
-    generateProtectedPDF("Civil Templates", "Rental Lease Templates", data)
+    # data = {
+    #     "LandlordFullName": "John Doe Landlord",
+    #     "LandlordAddress": "Random Landlord",
+    #     "Tenant Full Name": "John Doe Tenant ",
+    #     "Tenant Address": "Random Tenant’s ",
+    #     "Rental Property Address": "ABCD",
+    #     "Start Date": "16-04-2025",
+    #     "End Date": "16-04-2025",
+    #     "Amount": "1000",
+    #     "month/week": "Month",
+    #     "day": "5th",
+    #     "payment method": "NEFT",
+    #     "SecurityAmount": "10000",
+    #     "X": "10",
+    #     "number": "30"
+    # }
+    # generateProtectedPDF("Civil Templates", "Rental Lease Templates", data)
+    updateRecordInTable("Test", [
+        {'id': 1, 'caseTypeid': '2', 'templateName': 'Rental Lease Templates', 'isActive': 1, 'updated': True},
+        {'id': 2, 'caseTypeid': '2', 'templateName': 'Rental Lease Templates', 'isActive': 1, 'added': True}])
