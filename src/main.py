@@ -88,7 +88,7 @@ class UpdateFormFields(Resource):
     def post(self):
         CaseType = api.payload['CaseType']
         templateType = api.payload['templateType']
-        replacements = api.payload['replacements']
+        replacements = api.payload['replacement']
         response = updateTemplateFields(CaseType, templateType, replacements)
         return response
 

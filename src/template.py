@@ -10,29 +10,27 @@ import os
 import sys
 import subprocess
 import pikepdf
-
-
-def format_table(schema, table_name):
-    return f'{schema}."{table_name}"'
-
+import traceback
+import sys
+import psycopg2
 
 def getCatergoryDropDownData():
     conn = getConnection()
     sql = """
-    SELECT LOWER(REPLACE(ct2.name, ' ', '_')) as caseTypeValue, 
-           ct2.name as caseTypeLabel,
+    SELECT LOWER(REPLACE(ct2.name, ' ', '_')) as casetypevalue, 
+           ct2.name as casetypelabel,
            LOWER(REPLACE(templateName, ' ', '_')) as value, 
            templateName as label 
-    FROM template."TemplateTypes" ct 
-    INNER JOIN template."CaseTypes" ct2 ON ct.caseTypeid = ct2.id 
-    WHERE ct.isActive = 1
+    FROM template.TemplateTypes ct 
+    INNER JOIN template.CaseTypes ct2 ON ct.caseTypeid = ct2.id 
+    WHERE ct.isActive = True
     """
     df = pd.read_sql_query(sql, conn)
-    grouped_dict = df.groupby("caseTypeValue").apply(
+    grouped_dict = df.groupby("casetypevalue").apply(
         lambda g: g[["value", "label"]].to_dict(orient="records")
     ).to_dict()
-    case_types_array = df[["caseTypeValue", "caseTypeLabel"]].drop_duplicates().rename(
-        columns={"caseTypeValue": "value", "caseTypeLabel": "label"}
+    case_types_array = df[["casetypevalue", "casetypelabel"]].drop_duplicates().rename(
+        columns={"casetypevalue": "value", "casetypelabel": "label"}
     ).to_dict(orient="records")
     data = {
         "CaseTypes": case_types_array,
@@ -43,7 +41,7 @@ def getCatergoryDropDownData():
 
 def getDatafromTable(tableName):
     conn = getConnection()
-    sql = f'SELECT * FROM {format_table("template", tableName)}'
+    sql = f'SELECT * FROM template.{tableName}'
     df = pd.read_sql_query(sql, conn)
     df = df.to_dict(orient='records')
     return df
@@ -53,10 +51,10 @@ def getDataSet():
     conn = getConnection()
     sql = """
     SELECT 'CaseTypes' as type, id, LOWER(REPLACE(name, ' ', '_')) AS value, name AS label
-    FROM template."CaseTypes"
+    FROM template.CaseTypes
     UNION ALL
     SELECT 'TemplateTypes' as type, id, LOWER(REPLACE(templateName, ' ', '_')) AS value, templateName AS label
-    FROM template."TemplateTypes";
+    FROM template.TemplateTypes;
     """
     df = pd.read_sql_query(sql, conn)
     df = df.to_dict(orient='records')
@@ -77,7 +75,7 @@ def updateRecordInTable(table_name, records):
         'added': 0
     }
 
-    full_table = format_table("template", table_name)
+    full_table = "template."+table_name
 
     for record in records:
         record_id = record.get('id')
@@ -137,9 +135,9 @@ def getTemplateFeilds(caseType, TemplateType):
     conn = getConnection()
     sql = f"""
     SELECT templateForm 
-    FROM template."Templates" t 
-    WHERE t.caseTypeid = (SELECT id FROM template."CaseTypes" WHERE name = %s) 
-    AND t.TemplateTypeid = (SELECT id FROM template."TemplateTypes" tt WHERE templateName = %s)
+    FROM template.Templates t 
+    WHERE t.caseTypeid = (SELECT id FROM template.CaseTypes WHERE name = %s) 
+    AND t.TemplateTypeid = (SELECT id FROM template.TemplateTypes tt WHERE templateName = %s)
     """
     df = pd.read_sql_query(sql, conn, params=(caseType, TemplateType))
     if not df.empty:
@@ -156,10 +154,10 @@ def updateTemplateFields(caseType, TemplateType, updatedData):
     cursor = conn.cursor()
     updated_json = json.dumps(updatedData).replace('"', "'")
     sql = f"""
-    UPDATE template."Templates"
+    UPDATE template.Templates
     SET templateForm = %s
-    WHERE caseTypeid = (SELECT id FROM template."CaseTypes" WHERE name = %s)
-    AND TemplateTypeid = (SELECT id FROM template."TemplateTypes" WHERE templateName = %s)
+    WHERE caseTypeid = (SELECT id FROM template.CaseTypes WHERE name = %s)
+    AND TemplateTypeid = (SELECT id FROM template.TemplateTypes WHERE templateName = %s)
     """
     try:
         cursor.execute(sql, (updated_json, caseType, TemplateType))
@@ -172,26 +170,30 @@ def updateTemplateFields(caseType, TemplateType, updatedData):
 
 
 def extractDataItems(document, caseType, TemplateType):
-    doc = Document(document)
+    print("Inside")
+    doc_bytes = document.read()
+    doc = Document(BytesIO(doc_bytes))
     full_text = ''
     for para in doc.paragraphs:
         full_text += para.text + '\n'
     placeholders = re.findall(r'\[([^\[\]]+)\]', full_text)
     placeholdersData = {item: item for item in placeholders}
+    print("placeholder")
     conn = getConnection()
     cursor = conn.cursor()
     try:
-        cursor.execute('SELECT id FROM template."CaseTypes" WHERE name = %s', (caseType,))
+        cursor.execute('SELECT id FROM template.CaseTypes WHERE name = %s', (caseType,))
         case_row = cursor.fetchone()
+        print(case_row)
         if not case_row:
             raise ValueError(f"CaseType '{caseType}' not found.")
         caseTypeid = case_row[0]
-        cursor.execute('SELECT id FROM template."TemplateTypes" WHERE templateName = %s', (TemplateType,))
+        cursor.execute('SELECT id FROM template.TemplateTypes WHERE templateName = %s', (TemplateType,))
         template_row = cursor.fetchone()
         TemplateTypeid = template_row[0]
         cursor.execute(
             '''
-            SELECT id FROM template."Templates" 
+            SELECT id FROM template.Templates
             WHERE caseTypeid = %s AND TemplateTypeid = %s
             ''',
             (caseTypeid, TemplateTypeid)
@@ -200,24 +202,26 @@ def extractDataItems(document, caseType, TemplateType):
         if existing:
             cursor.execute(
                 '''
-                UPDATE template."Templates" 
+                UPDATE template.Templates 
                 SET templateData = %s, templateForm = %s
                 WHERE caseTypeid = %s AND TemplateTypeid = %s
                 ''',
-                (document, str(placeholdersData), caseTypeid, TemplateTypeid)
+                (psycopg2.Binary(doc_bytes), str(placeholdersData), caseTypeid, TemplateTypeid)
             )
             print("Existing template updated.")
         else:
             cursor.execute(
                 '''
-                INSERT INTO template."Templates" (caseTypeid, TemplateTypeid, templateData, templateForm)
+                INSERT INTO template.Templates(caseTypeid, TemplateTypeid, templateData, templateForm)
                 VALUES (%s, %s, %s, %s)
                 ''',
-                (caseTypeid, TemplateTypeid, document, str(placeholdersData))
+                (caseTypeid, TemplateTypeid, psycopg2.Binary(doc_bytes), str(placeholdersData))
             )
             print("New template inserted.")
         conn.commit()
     except Exception as e:
+        print("Error occurred:", e)
+        traceback.print_exc()  #
         conn.rollback()
         print("Error in extractDataItems:", e)
     finally:
@@ -243,9 +247,9 @@ def generateProtectedPDF(caseType, TemplateType, replacements):
     cursor = conn.cursor()
     sql = f"""
     SELECT templateData 
-    FROM template."Templates" t 
-    WHERE t.caseTypeid = (SELECT id FROM template."CaseTypes" WHERE name = %s) 
-    AND t.TemplateTypeid = (SELECT id FROM template."TemplateTypes" tt WHERE templateName = %s)
+    FROM template.Templates t 
+    WHERE t.caseTypeid = (SELECT id FROM template.CaseTypes WHERE name = %s) 
+    AND t.TemplateTypeid = (SELECT id FROM template.TemplateTypes tt WHERE templateName = %s)
     """
     cursor.execute(sql, (caseType, TemplateType))
     row = cursor.fetchone()
