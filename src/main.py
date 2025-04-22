@@ -11,10 +11,10 @@ CORS(app)
 api = Api(app, version='1.0', title='Template Generator API',
           description='Template Generator App',
           )
-from template import getCatergoryDropDownData, getTemplateFeilds, generateProtectedPDF, updateTemplateFields, extractDataItems, getDatafromTable, updateRecordInTable
+from template import getCatergoryDropDownData, getTemplateFeilds, generateProtectedPDF, updateTemplateFields, \
+    extractDataItems, getDatafromTable, updateRecordInTable, getDataSet
 
 ns = api.namespace('template', description='Template operations')
-
 
 # Models for Swagger docs
 update_model = api.model('UpdateModel', {
@@ -22,7 +22,18 @@ update_model = api.model('UpdateModel', {
     'whereCondition': fields.Raw(required=True, description='WHERE conditions to identify records'),
 })
 
+
 # GET Endpoint
+@ns.route('/getValues')
+class TableData(Resource):
+    def get(self):
+        """Fetch all data from the specified table"""
+        try:
+            data = getDataSet()
+            return data, 200
+        except Exception as e:
+            return {"error": str(e)}, 500
+
 @ns.route('/<string:tableName>')
 class TableData(Resource):
     def get(self, tableName):
@@ -33,16 +44,14 @@ class TableData(Resource):
         except Exception as e:
             return {"error": str(e)}, 500
 
-    @ns.expect(update_model)
-    def put(self, tableName):
+    def post(self, tableName):
         """Update records in the specified table"""
         payload = request.json
-        updateData = payload.get('updateData', {})
-        whereCondition = payload.get('whereCondition', {})
-        if not updateData or not whereCondition:
-            return {"error": "Both 'updateData' and 'whereCondition' must be provided."}, 400
-        result = updateRecordInTable(tableName, updateData, whereCondition)
+        updateData = api.payload
+        result = updateRecordInTable(tableName, updateData)
         return result
+
+
 @ns.route('/list-templates')
 class TodoList(Resource):
     def get(self):
@@ -83,6 +92,7 @@ class UpdateFormFields(Resource):
         response = updateTemplateFields(CaseType, templateType, replacements)
         return response
 
+
 upload_parser = api.parser()
 upload_parser.add_argument('file', location='files',
                            type=FileStorage, required=True,
@@ -93,6 +103,7 @@ upload_parser.add_argument('caseType', location='form',
 upload_parser.add_argument('TemplateType', location='form',
                            type=str, required=True,
                            help='Name of the template type')
+
 
 @ns.route('/upload-documents')
 @ns.expect(upload_parser)
@@ -108,6 +119,7 @@ class UploadWordDoc(Resource):
         else:
             return {"error": "Invalid file type. Please upload a .docx file."}, 400
 
+
 @ns.route('/generate-template-pdf')
 class GenerateProtectedPDF(Resource):
     @ns.expect(GenerateProtectedPDFParams)
@@ -117,6 +129,7 @@ class GenerateProtectedPDF(Resource):
             templateType = api.payload['templateType']
             replacements = api.payload['replacements']
             secured_pdf, today_date = generateProtectedPDF(CaseType, templateType, replacements)
+            secured_pdf.seek(0)
             if sys.platform == "win32":
                 mainPath = os.getcwd() + '\\temp\\'
             else:
@@ -131,7 +144,7 @@ class GenerateProtectedPDF(Resource):
             return send_file(
                 secured_pdf,
                 as_attachment=True,
-                download_name="Secured" + templateType + ".pdf",
+                download_name=templateType.replace(' ', '_') + ".pdf",
                 mimetype='application/pdf'
             )
         except Exception as e:

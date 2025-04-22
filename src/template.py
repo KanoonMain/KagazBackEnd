@@ -12,12 +12,21 @@ import subprocess
 import pikepdf
 
 
+def format_table(schema, table_name):
+    return f'{schema}."{table_name}"'
+
+
 def getCatergoryDropDownData():
     conn = getConnection()
-    sql = ("SELECT LOWER(REPLACE(ct2.name, ' ', '_')) as caseTypeValue, ct2.name as caseTypeLabel ,  LOWER(REPLACE("
-           "templateName, ' ', '_')) as value, templateName  as label from TemplateTypes ct  inner join CaseTypes ct2 "
-           "on ct.caseTypeid  = ct2.id where ct.isActive = 1")
-    # Load into DataFrame
+    sql = """
+    SELECT LOWER(REPLACE(ct2.name, ' ', '_')) as caseTypeValue, 
+           ct2.name as caseTypeLabel,
+           LOWER(REPLACE(templateName, ' ', '_')) as value, 
+           templateName as label 
+    FROM template."TemplateTypes" ct 
+    INNER JOIN template."CaseTypes" ct2 ON ct.caseTypeid = ct2.id 
+    WHERE ct.isActive = 1
+    """
     df = pd.read_sql_query(sql, conn)
     grouped_dict = df.groupby("caseTypeValue").apply(
         lambda g: g[["value", "label"]].to_dict(orient="records")
@@ -34,7 +43,7 @@ def getCatergoryDropDownData():
 
 def getDatafromTable(tableName):
     conn = getConnection()
-    sql = f'''SELECT * FROM {tableName}'''
+    sql = f'SELECT * FROM {format_table("template", tableName)}'
     df = pd.read_sql_query(sql, conn)
     df = df.to_dict(orient='records')
     return df
@@ -42,14 +51,13 @@ def getDatafromTable(tableName):
 
 def getDataSet():
     conn = getConnection()
-    sql = f'''SELECT 'CaseTypes' as type, id, LOWER(REPLACE(name, ' ', '_')) AS value, name AS label
-            FROM CaseTypes
-            
-            UNION ALL
-            
-            SELECT 'TemplateTypes' as type,  id, LOWER(REPLACE(templateName, ' ', '_')) AS value, templateName AS label
-            FROM TemplateTypes;
-    '''
+    sql = """
+    SELECT 'CaseTypes' as type, id, LOWER(REPLACE(name, ' ', '_')) AS value, name AS label
+    FROM template."CaseTypes"
+    UNION ALL
+    SELECT 'TemplateTypes' as type, id, LOWER(REPLACE(templateName, ' ', '_')) AS value, templateName AS label
+    FROM template."TemplateTypes";
+    """
     df = pd.read_sql_query(sql, conn)
     df = df.to_dict(orient='records')
     case_types = [item for item in df if item['type'] == 'CaseTypes']
@@ -69,6 +77,8 @@ def updateRecordInTable(table_name, records):
         'added': 0
     }
 
+    full_table = format_table("template", table_name)
+
     for record in records:
         record_id = record.get('id')
 
@@ -77,8 +87,7 @@ def updateRecordInTable(table_name, records):
                 print("Missing 'id' for update operation.")
                 continue
 
-            # Check if the record exists
-            cursor.execute(f"SELECT 1 FROM {table_name} WHERE id=?", (record_id,))
+            cursor.execute(f'SELECT 1 FROM {full_table} WHERE id=%s', (record_id,))
             exists = cursor.fetchone()
 
             update_data = {k: v for k, v in record.items() if k not in ['id', 'updated', 'added']}
@@ -87,26 +96,21 @@ def updateRecordInTable(table_name, records):
                 continue
 
             if exists:
-                # Update existing record
-                set_clause = ', '.join(f"{k}=?" for k in update_data)
-                values = list(update_data.values())
-                values.append(record_id)
+                set_clause = ', '.join(f'"{k}"=%s' for k in update_data)
+                values = list(update_data.values()) + [record_id]
 
-                query = f"UPDATE {table_name} SET {set_clause} WHERE id=?"
+                query = f'UPDATE {full_table} SET {set_clause} WHERE id=%s'
                 cursor.execute(query, values)
-
-                if cursor.rowcount > 0:
-                    result['updated'] += 1
+                result['updated'] += 1
             else:
-                # Insert new record
                 insert_data = update_data.copy()
-                insert_data['id'] = record_id  # Include ID in the insert
+                insert_data['id'] = record_id
 
-                columns = ', '.join(insert_data.keys())
-                placeholders = ', '.join(['?'] * len(insert_data))
+                columns = ', '.join(f'"{k}"' for k in insert_data)
+                placeholders = ', '.join(['%s'] * len(insert_data))
                 values = list(insert_data.values())
 
-                query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+                query = f'INSERT INTO {full_table} ({columns}) VALUES ({placeholders})'
                 cursor.execute(query, values)
                 result['added'] += 1
 
@@ -116,11 +120,11 @@ def updateRecordInTable(table_name, records):
                 print("No fields to insert.")
                 continue
 
-            columns = ', '.join(insert_data.keys())
-            placeholders = ', '.join(['?'] * len(insert_data))
+            columns = ', '.join(f'"{k}"' for k in insert_data)
+            placeholders = ', '.join(['%s'] * len(insert_data))
             values = list(insert_data.values())
 
-            query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+            query = f'INSERT INTO {full_table} ({columns}) VALUES ({placeholders})'
             cursor.execute(query, values)
             result['added'] += 1
 
@@ -129,14 +133,15 @@ def updateRecordInTable(table_name, records):
     return result
 
 
-
 def getTemplateFeilds(caseType, TemplateType):
     conn = getConnection()
-    sql = f'''
-    SELECT templateForm FROM Templates t WHERE t.caseTypeid = ( SELECT id FROM CaseTypes where name = '{caseType}') and 
-    t.TemplateTypeid = ( SELECT id FROM TemplateTypes tt  where templateName = '{TemplateType}')
-    '''
-    df = pd.read_sql_query(sql, conn)
+    sql = f"""
+    SELECT templateForm 
+    FROM template."Templates" t 
+    WHERE t.caseTypeid = (SELECT id FROM template."CaseTypes" WHERE name = %s) 
+    AND t.TemplateTypeid = (SELECT id FROM template."TemplateTypes" tt WHERE templateName = %s)
+    """
+    df = pd.read_sql_query(sql, conn, params=(caseType, TemplateType))
     if not df.empty:
         df = df.iloc[0][0]
         df = df.replace("'", '"')
@@ -149,16 +154,15 @@ def getTemplateFeilds(caseType, TemplateType):
 def updateTemplateFields(caseType, TemplateType, updatedData):
     conn = getConnection()
     cursor = conn.cursor()
-    # Ensure the updated data is a JSON string with single quotes for SQL
     updated_json = json.dumps(updatedData).replace('"', "'")
-    sql = f'''
-    UPDATE Templates
-    SET templateForm = '{updated_json}'
-    WHERE caseTypeid = (SELECT id FROM CaseTypes WHERE name = '{caseType}')
-      AND TemplateTypeid = (SELECT id FROM TemplateTypes WHERE templateName = '{TemplateType}')
-    '''
+    sql = f"""
+    UPDATE template."Templates"
+    SET templateForm = %s
+    WHERE caseTypeid = (SELECT id FROM template."CaseTypes" WHERE name = %s)
+    AND TemplateTypeid = (SELECT id FROM template."TemplateTypes" WHERE templateName = %s)
+    """
     try:
-        cursor.execute(sql)
+        cursor.execute(sql, (updated_json, caseType, TemplateType))
         conn.commit()
         return "Template updated successfully."
     except Exception as e:
@@ -177,18 +181,18 @@ def extractDataItems(document, caseType, TemplateType):
     conn = getConnection()
     cursor = conn.cursor()
     try:
-        cursor.execute('SELECT id FROM CaseTypes WHERE name = ?', (caseType,))
+        cursor.execute('SELECT id FROM template."CaseTypes" WHERE name = %s', (caseType,))
         case_row = cursor.fetchone()
         if not case_row:
             raise ValueError(f"CaseType '{caseType}' not found.")
         caseTypeid = case_row[0]
-        cursor.execute('SELECT id FROM TemplateTypes WHERE templateName = ?', (TemplateType,))
+        cursor.execute('SELECT id FROM template."TemplateTypes" WHERE templateName = %s', (TemplateType,))
         template_row = cursor.fetchone()
         TemplateTypeid = template_row[0]
         cursor.execute(
             '''
-            SELECT id FROM Templates 
-            WHERE caseTypeid = ? AND TemplateTypeid = ?
+            SELECT id FROM template."Templates" 
+            WHERE caseTypeid = %s AND TemplateTypeid = %s
             ''',
             (caseTypeid, TemplateTypeid)
         )
@@ -196,9 +200,9 @@ def extractDataItems(document, caseType, TemplateType):
         if existing:
             cursor.execute(
                 '''
-                UPDATE Templates 
-                SET templateData = ?, templateForm = ?
-                WHERE caseTypeid = ? AND TemplateTypeid = ?
+                UPDATE template."Templates" 
+                SET templateData = %s, templateForm = %s
+                WHERE caseTypeid = %s AND TemplateTypeid = %s
                 ''',
                 (document, str(placeholdersData), caseTypeid, TemplateTypeid)
             )
@@ -206,8 +210,8 @@ def extractDataItems(document, caseType, TemplateType):
         else:
             cursor.execute(
                 '''
-                INSERT INTO Templates (caseTypeid, TemplateTypeid, templateData, templateForm)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO template."Templates" (caseTypeid, TemplateTypeid, templateData, templateForm)
+                VALUES (%s, %s, %s, %s)
                 ''',
                 (caseTypeid, TemplateTypeid, document, str(placeholdersData))
             )
@@ -222,19 +226,12 @@ def extractDataItems(document, caseType, TemplateType):
 
 
 def replace_placeholders_in_paragraph(paragraph, replacements):
-    # Combine runs into full text
     full_text = ''.join(run.text for run in paragraph.runs)
-
-    # Replace placeholders like [LandlordFullName] with data values
     for key, value in replacements.items():
         pattern = rf"\[{re.escape(key)}\]"
         full_text = re.sub(pattern, value, full_text)
-
-    # Clear all existing runs
     for run in paragraph.runs:
         run.text = ''
-
-    # Set the new text to the first run
     if paragraph.runs:
         paragraph.runs[0].text = full_text
     else:
@@ -244,11 +241,13 @@ def replace_placeholders_in_paragraph(paragraph, replacements):
 def generateProtectedPDF(caseType, TemplateType, replacements):
     conn = getConnection()
     cursor = conn.cursor()
-    sql = f'''
-    SELECT templateData FROM Templates t WHERE t.caseTypeid = ( SELECT id FROM CaseTypes where name = '{caseType}') and
-    t.TemplateTypeid = ( SELECT id FROM TemplateTypes tt  where templateName = '{TemplateType}')
-    '''
-    cursor.execute(sql)
+    sql = f"""
+    SELECT templateData 
+    FROM template."Templates" t 
+    WHERE t.caseTypeid = (SELECT id FROM template."CaseTypes" WHERE name = %s) 
+    AND t.TemplateTypeid = (SELECT id FROM template."TemplateTypes" tt WHERE templateName = %s)
+    """
+    cursor.execute(sql, (caseType, TemplateType))
     row = cursor.fetchone()
     conn.close()
     doc_blob = row[0]
@@ -257,22 +256,17 @@ def generateProtectedPDF(caseType, TemplateType, replacements):
     for para in doc.paragraphs:
         replace_placeholders_in_paragraph(para, replacements)
     today_date = datetime.now().strftime("%Y%m%d%H%M%S%f")[:-3]
-    if sys.platform == "win32":
-        mainPath = os.getcwd() + '\\temp\\'
-    else:
-        mainPath = os.getcwd() + '\\temp\\'
+    mainPath = os.path.join(os.getcwd(), 'temp')
     if not os.path.exists(mainPath):
-        print("Created")
         os.mkdir(mainPath)
-    temp_docx = mainPath + str(today_date) + TemplateType.replace(' ', '_') + '.docx'
+    temp_docx = os.path.join(mainPath, f"{today_date}{TemplateType.replace(' ', '_')}.docx")
     doc.save(temp_docx)
-    output_pdf = mainPath + str(today_date) + TemplateType.replace(' ', '_') + '.pdf'
+    output_pdf = os.path.join(mainPath, f"{today_date}{TemplateType.replace(' ', '_')}.pdf")
     if sys.platform == "win32":
         import pythoncom
         pythoncom.CoInitialize()
         convert(temp_docx, output_pdf)
     else:
-        # sudo apt-get install unoconv libreoffice
         subprocess.run(['unoconv', '-f', 'pdf', '-o', output_pdf, temp_docx])
     with pikepdf.open(output_pdf) as pdf:
         encrypted_pdf_stream = BytesIO()
@@ -292,28 +286,11 @@ def generateProtectedPDF(caseType, TemplateType, replacements):
                 )
             )
         )
-        # print("Completed", encrypted_pdf_stream)
         return encrypted_pdf_stream, today_date
 
 
 if __name__ == '__main__':
-    # data = {
-    #     "LandlordFullName": "John Doe Landlord",
-    #     "LandlordAddress": "Random Landlord",
-    #     "Tenant Full Name": "John Doe Tenant ",
-    #     "Tenant Address": "Random Tenant’s ",
-    #     "Rental Property Address": "ABCD",
-    #     "Start Date": "16-04-2025",
-    #     "End Date": "16-04-2025",
-    #     "Amount": "1000",
-    #     "month/week": "Month",
-    #     "day": "5th",
-    #     "payment method": "NEFT",
-    #     "SecurityAmount": "10000",
-    #     "X": "10",
-    #     "number": "30"
-    # }
-    # generateProtectedPDF("Civil Templates", "Rental Lease Templates", data)
     updateRecordInTable("Test", [
         {'id': 1, 'caseTypeid': '2', 'templateName': 'Rental Lease Templates', 'isActive': 1, 'updated': True},
-        {'id': 2, 'caseTypeid': '2', 'templateName': 'Rental Lease Templates', 'isActive': 1, 'added': True}])
+        {'id': 2, 'caseTypeid': '2', 'templateName': 'Rental Lease Templates', 'isActive': 1, 'added': True}
+    ])
