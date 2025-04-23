@@ -271,9 +271,10 @@ def generateProtectedPDF(caseType, TemplateType, replacements):
         pythoncom.CoInitialize()
         convert(temp_docx, output_pdf)
     else:
-        subprocess.run(['unoconv', '-f', 'pdf', '-o', output_pdf, temp_docx])
+        unoconv_path = '/usr/bin/unoconv'
+        # subprocess.run([unoconv_path, '-f', 'pdf', '-o', output_pdf, temp_docx])
         subprocess.run(
-            ['env', '-i', 'unoconv', '-f', 'pdf', '-o', output_pdf, temp_docx],
+            ['env', '-i', unoconv_path, '-f', 'pdf', '-o', output_pdf, temp_docx],
             check=True
         )
     with pikepdf.open(output_pdf) as pdf:
