@@ -2,7 +2,6 @@ import pandas as pd
 from connect_db import getConnection
 import json
 from docx import Document
-from docx2pdf import convert
 from io import BytesIO
 from datetime import datetime
 import re
@@ -268,10 +267,15 @@ def generateProtectedPDF(caseType, TemplateType, replacements):
     output_pdf = os.path.join(mainPath, f"{today_date}{TemplateType.replace(' ', '_')}.pdf")
     if sys.platform == "win32":
         import pythoncom
+        from docx2pdf import convert
         pythoncom.CoInitialize()
         convert(temp_docx, output_pdf)
     else:
         subprocess.run(['unoconv', '-f', 'pdf', '-o', output_pdf, temp_docx])
+        subprocess.run(
+            ['env', '-i', 'unoconv', '-f', 'pdf', '-o', output_pdf, temp_docx],
+            check=True
+        )
     with pikepdf.open(output_pdf) as pdf:
         encrypted_pdf_stream = BytesIO()
         pdf.save(
