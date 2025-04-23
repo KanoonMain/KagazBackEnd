@@ -273,10 +273,10 @@ def generateProtectedPDF(caseType, TemplateType, replacements):
     else:
         unoconv_path = '/usr/bin/unoconv'
         # subprocess.run([unoconv_path, '-f', 'pdf', '-o', output_pdf, temp_docx])
-        subprocess.run(
-            [unoconv_path, '-f', 'pdf', '-o', output_pdf, temp_docx],
-            check=True
-        )
+        subprocess.run([
+            unoconv_path, '--listener', '-f', 'pdf',
+            '-o', output_pdf, temp_docx
+        ], check=True)
     with pikepdf.open(output_pdf) as pdf:
         encrypted_pdf_stream = BytesIO()
         pdf.save(
