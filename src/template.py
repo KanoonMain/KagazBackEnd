@@ -19,7 +19,8 @@ def getCatergoryDropDownData():
     SELECT LOWER(REPLACE(ct2.name, ' ', '_')) as casetypevalue, 
            ct2.name as casetypelabel,
            LOWER(REPLACE(templateName, ' ', '_')) as value, 
-           templateName as label 
+           templateName as label, 
+           ct.price
     FROM template.TemplateTypes ct 
     INNER JOIN template.CaseTypes ct2 ON ct.caseTypeid = ct2.id 
     WHERE ct.isActive = True
