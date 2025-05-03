@@ -1,18 +1,27 @@
+import ast
+import json
 from flask import Flask, request
 from flask_restx import Api, Resource, fields
 from flask_cors import CORS
-from flask import send_file
+from flask import send_file, jsonify
 import os
 import sys
 from werkzeug.datastructures import FileStorage
-
+from flask_jwt_extended import JWTManager, get_jwt_identity, jwt_required
+from flask_bcrypt import Bcrypt
+from userOperations import userRegister, userLogin, userCredits, rechargeCredits, userUpdatePassword, userOrders, userOrderRegenerate
 app = Flask(__name__)
 CORS(app)
+bcrypt = Bcrypt(app)
+from datetime import timedelta
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=12)
+app.config['JWT_SECRET_KEY'] = 'kanoon-prod'
+jwt = JWTManager(app)
 api = Api(app, version='1.0', title='Template Generator API',
           description='Template Generator App',
           )
 from template import getCatergoryDropDownData, getTemplateFeilds, generateProtectedPDF, updateTemplateFields, \
-    extractDataItems, getDatafromTable, updateRecordInTable, getDataSet
+    extractDataItems, getDatafromTable, updateRecordInTable, getDataSet, checkUserBalance
 
 ns = api.namespace('template', description='Template operations')
 
@@ -34,6 +43,85 @@ class TableData(Resource):
         except Exception as e:
             return {"error": str(e)}, 500
 
+@ns.route('/register')
+class TableDataRegister(Resource):
+    def post(self):
+        """Fetch all data from the specified table"""
+        try:
+            data = request.get_json()
+            email = data['email']
+            password = data['password']
+            data, statusCode = userRegister(email, password, bcrypt)
+            return data, statusCode
+        except Exception as e:
+            return {"error": str(e)}, 500
+
+@ns.route('/credits')
+class TableDataUserCredits(Resource):
+    @jwt_required()
+    def get(self):
+        try:
+            user_id = get_jwt_identity()
+            data, statusCode = userCredits(int(user_id))
+            return data, statusCode
+        except Exception as e:
+            return jsonify({'message': 'Failed to retrieve credits', 'error': str(e)}), 500
+
+@ns.route('/recharge')
+class TableDataUserCreditRecharge(Resource):
+    @jwt_required()
+    def post(self):
+        try:
+            data = api.payload
+            amount = data.get('amount')
+            user = get_jwt_identity()
+            data, statusCode = rechargeCredits(user, amount)
+            return data, statusCode
+        except Exception as e:
+            return {'message': 'Recharge failed', 'error': str(e)}, 500
+
+@ns.route('/protected')
+class TableDataUser(Resource):
+    @jwt_required()
+    def get(self):
+        current_user = get_jwt_identity()
+        return {'message': f'Hello {current_user["email"]}'}, 200
+
+@ns.route('/login')
+class TableDataLogin(Resource):
+    def post(self):
+        """Fetch all data from the specified table"""
+        try:
+            data = request.get_json()
+            email = data['email']
+            password = data['password']
+            data, statusCode = userLogin(email, password, bcrypt)
+            return data, statusCode
+        except Exception as e:
+            return {"error": str(e)}, 500
+
+@ns.route('/update-password')
+class TableDataUpdatePassword(Resource):
+    @jwt_required()
+    def post(self):
+        """Fetch all data from the specified table"""
+        try:
+            data = request.get_json()
+            email = data['email']
+            oldPassword = data['oldPassword']
+            newPassword = data['newPassword']
+            data, statusCode = userUpdatePassword(email, oldPassword, newPassword,  bcrypt)
+            return data, statusCode
+        except Exception as e:
+            return {"error": str(e)}, 500
+
+@ns.route('/orders')
+class TableDataUserOrders(Resource):
+    @jwt_required()
+    def get(self):
+        current_user = get_jwt_identity()
+        data, statusCode = userOrders(current_user)
+        return data, statusCode
 @ns.route('/<string:tableName>')
 class TableData(Resource):
     def get(self, tableName):
@@ -51,7 +139,6 @@ class TableData(Resource):
         result = updateRecordInTable(tableName, updateData)
         return result
 
-
 @ns.route('/list-templates')
 class TodoList(Resource):
     def get(self):
@@ -65,7 +152,7 @@ getTemplateDataParams = api.model('Todo', {
 })
 
 
-@ns.route('/get-templates-feilds')
+@ns.route('/get-templates-fields')
 class getTemplateData(Resource):
     @ns.expect(getTemplateDataParams)
     def post(self):
@@ -118,16 +205,50 @@ class UploadWordDoc(Resource):
             return doc, 200
         else:
             return {"error": "Invalid file type. Please upload a .docx file."}, 400
-
+@ns.route('/regenerate')
+class ReGenerateProtectedPDF(Resource):
+     @jwt_required()
+     def post(self):
+            try:
+                user_id = get_jwt_identity()
+                orderId = api.payload['orderId']
+                CaseType, templateType, replacements = userOrderRegenerate(user_id, orderId)
+                replacements = ast.literal_eval(replacements)
+                secured_pdf, today_date = generateProtectedPDF(CaseType, templateType, replacements)
+                secured_pdf.seek(0)
+                if sys.platform == "win32":
+                    mainPath = os.getcwd() + '\\temp\\'
+                else:
+                    mainPath = os.getcwd() + '\\temp\\'
+                try:
+                    temp_docx = mainPath + str(today_date) + templateType.replace(' ', '_') + '.docx'
+                    output_pdf = mainPath + str(today_date) + templateType.replace(' ', '_') + '.pdf'
+                    os.remove(temp_docx)
+                    os.remove(output_pdf)
+                except Exception as e:
+                    print(e)
+                return send_file(
+                    secured_pdf,
+                    as_attachment=True,
+                    download_name=templateType.replace(' ', '_') + ".pdf",
+                    mimetype='application/pdf'
+                )
+            except Exception as e:
+                return str(e), 500
 
 @ns.route('/generate-template-pdf')
 class GenerateProtectedPDF(Resource):
+    @jwt_required()
     @ns.expect(GenerateProtectedPDFParams)
     def post(self):
         try:
+            user_id = get_jwt_identity()
             CaseType = api.payload['CaseType']
             templateType = api.payload['templateType']
             replacements = api.payload['replacements']
+            isOk, response, statusCode = checkUserBalance(user_id, CaseType, templateType, replacements)
+            if not isOk:
+                return response, statusCode
             secured_pdf, today_date = generateProtectedPDF(CaseType, templateType, replacements)
             secured_pdf.seek(0)
             if sys.platform == "win32":

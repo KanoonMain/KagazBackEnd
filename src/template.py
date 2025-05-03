@@ -34,7 +34,8 @@ def getCatergoryDropDownData():
     ).to_dict(orient="records")
     data = {
         "CaseTypes": case_types_array,
-        "TemplateTypes": grouped_dict
+        "TemplateTypes": grouped_dict,
+        'rawData': df.to_dict(orient="records")
     }
     return data
 
@@ -75,7 +76,7 @@ def updateRecordInTable(table_name, records):
         'added': 0
     }
 
-    full_table = "template."+table_name
+    full_table = "template." + table_name
 
     for record in records:
         record_id = record.get('id')
@@ -170,7 +171,6 @@ def updateTemplateFields(caseType, TemplateType, updatedData):
 
 
 def extractDataItems(document, caseType, TemplateType):
-    print("Inside")
     doc_bytes = document.read()
     doc = Document(BytesIO(doc_bytes))
     full_text = ''
@@ -178,13 +178,11 @@ def extractDataItems(document, caseType, TemplateType):
         full_text += para.text + '\n'
     placeholders = re.findall(r'\[([^\[\]]+)\]', full_text)
     placeholdersData = {item: item for item in placeholders}
-    print("placeholder")
     conn = getConnection()
     cursor = conn.cursor()
     try:
         cursor.execute('SELECT id FROM template.CaseTypes WHERE name = %s', (caseType,))
         case_row = cursor.fetchone()
-        print(case_row)
         if not case_row:
             raise ValueError(f"CaseType '{caseType}' not found.")
         caseTypeid = case_row[0]
@@ -300,6 +298,35 @@ def generateProtectedPDF(caseType, TemplateType, replacements):
             )
         )
         return encrypted_pdf_stream, today_date
+
+
+def checkUserBalance(id, caseType, templateType, replacements):
+    conn = getConnection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+    SELECT ct.price 
+    FROM template.TemplateTypes ct
+    WHERE ct.caseTypeid = (SELECT id FROM template.CaseTypes WHERE name = '{caseType}') 
+    AND ct.templatename  =  '{templateType}'
+    """)
+    result = cursor.fetchone()
+    if not result:
+        return False, {'message': 'Template not found or inactive'}, 404
+    price = result[0]
+    # Check user balance
+    cursor.execute("SELECT credits FROM template.users WHERE id = %s", (id,))
+    user_balance = cursor.fetchone()
+    if not user_balance or user_balance[0] < price:
+        return False, {'message': 'Insufficient balance'}, 403
+    # Deduct price from user balance
+    cursor.execute("UPDATE template.users SET credits = credits - %s WHERE id = %s", (price, id))
+    # Insert order record
+    cursor.execute("""
+        INSERT INTO template.Orders (user_id, case_type, template_type, price, payload)
+        VALUES (%s, %s, %s, %s, %s)
+    """, (id, caseType, templateType, price, str(replacements)))
+    conn.commit()
+    return True, "", 200
 
 
 if __name__ == '__main__':

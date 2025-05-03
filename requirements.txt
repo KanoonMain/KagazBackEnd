@@ -6,3 +6,6 @@ python-docx
 docx2pdf
 pikepdf
 psycopg2-binary
+Flask-Bcrypt
+flask_mail
+flask_jwt_extended
