@@ -9,7 +9,9 @@ import sys
 from werkzeug.datastructures import FileStorage
 from flask_jwt_extended import JWTManager, get_jwt_identity, jwt_required
 from flask_bcrypt import Bcrypt
-from userOperations import userRegister, userLogin, userCredits, rechargeCredits, userUpdatePassword, userOrders, userOrderRegenerate
+from flask import  redirect
+
+from userOperations import userRegister, userLogin, userCredits, rechargeCredits, userUpdatePassword, userOrders, userOrderRegenerate, initiatePhonePePayment, verify_payment
 app = Flask(__name__)
 CORS(app)
 bcrypt = Bcrypt(app)
@@ -67,18 +69,18 @@ class TableDataUserCredits(Resource):
         except Exception as e:
             return jsonify({'message': 'Failed to retrieve credits', 'error': str(e)}), 500
 
-@ns.route('/recharge')
-class TableDataUserCreditRecharge(Resource):
-    @jwt_required()
-    def post(self):
-        try:
-            data = api.payload
-            amount = data.get('amount')
-            user = get_jwt_identity()
-            data, statusCode = rechargeCredits(user, amount)
-            return data, statusCode
-        except Exception as e:
-            return {'message': 'Recharge failed', 'error': str(e)}, 500
+# @ns.route('/recharge')
+# class TableDataUserCreditRecharge(Resource):
+#     @jwt_required()
+#     def post(self):
+#         try:
+#             data = api.payload
+#             amount = data.get('amount')
+#             user = get_jwt_identity()
+#             data, statusCode = rechargeCredits(user, amount)
+#             return data, statusCode
+#         except Exception as e:
+#             return {'message': 'Recharge failed', 'error': str(e)}, 500
 
 @ns.route('/protected')
 class TableDataUser(Resource):
@@ -271,6 +273,42 @@ class GenerateProtectedPDF(Resource):
         except Exception as e:
             return str(e), 500
 
+# GET Endpoint
 
+@ns.route('/recharge')
+class TableDataUserCreditRecharge(Resource):
+    @jwt_required()
+    def post(self):
+        try:
+            data = api.payload
+            amount = data.get('amount')
+            user = get_jwt_identity()
+            payment_info, status_code = initiatePhonePePayment(user, amount)
+            return payment_info, status_code
+        except Exception as e:
+            return {'message': 'Recharge failed', 'error': str(e)}, 500
+
+@ns.route('/verify-payment/<string:transaction_id>')
+class TableDataUserCreditRechargeStatus(Resource):
+    @jwt_required()
+    def get(self, transaction_id):
+        try:
+            payment_info, status_code = verify_payment(transaction_id)
+            return payment_info, status_code
+        except Exception as e:
+            return {'message': 'Recharge failed', 'error': str(e)}, 500
+
+@ns.route('/verify-payment-callback')
+class TableDataUserCreditRechargeCallback(Resource):
+    def post(self):
+        try:
+            transaction_id = request.form.get("transactionId") or request.args.get("transactionId")
+            print(f"[API CALL] Verifying payment for {transaction_id}")
+            if not transaction_id:
+                return "Missing transactionId", 400
+            # Redirect to frontend GET page
+            return redirect(f"http://localhost:5173/payment-status?transactionId={transaction_id}")
+        except Exception as e:
+            return f"Error: {str(e)}", 500
 if __name__ == '__main__':
     app.run(debug=True)
