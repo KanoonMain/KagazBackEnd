@@ -307,7 +307,7 @@ class TableDataUserCreditRechargeCallback(Resource):
             if not transaction_id:
                 return "Missing transactionId", 400
             # Redirect to frontend GET page
-            return redirect(f"http://localhost:5173/payment-status?transactionId={transaction_id}")
+            return redirect(f"https://kagaz.ruaaventures.com/payment-status?transactionId={transaction_id}")
         except Exception as e:
             return f"Error: {str(e)}", 500
 if __name__ == '__main__':

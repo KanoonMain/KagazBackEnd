@@ -186,8 +186,8 @@ def initiatePhonePePayment(user_id, amount):
         conn.commit()
 
         # Create PhonePe payment payload
-        redirect_url = f"http://localhost:5000/template/verify-payment-callback?transactionId={transaction_id}"
-        callback_url = f"http://localhost:5000/template/verify-payment-callback"
+        redirect_url = f"https://kagaz.ruaaventures.com/api/template/verify-payment-callback?transactionId={transaction_id}"
+        callback_url = f"https://kagaz.ruaaventures.com/api/template/verify-payment-callback"
         payload = {
             "merchantId": PHONEPE_MERCHANT_ID,
             "merchantTransactionId": transaction_id,
