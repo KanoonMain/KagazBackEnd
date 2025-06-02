@@ -7,10 +7,19 @@ from connect_db import getConnection
 doc_path = 'Rental_Agreement.docx'
 doc = Document(doc_path)
 
-# Extract full text with spacing preserved
+# Extract full text from paragraphs and tables with spacing preserved
 full_text = ''
+
+# Read normal paragraphs
 for para in doc.paragraphs:
     full_text += para.text + '\n'
+
+# Read text inside tables
+for table in doc.tables:
+    for row in table.rows:
+        for cell in row.cells:
+            cell_text = cell.text.strip()
+            full_text += cell_text + '\n'
 
 # Step 2: Extract placeholders in square brackets
 placeholders = re.findall(r'\[([^\[\]]+)\]', full_text)

@@ -176,6 +176,11 @@ def extractDataItems(document, caseType, TemplateType):
     full_text = ''
     for para in doc.paragraphs:
         full_text += para.text + '\n'
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                cell_text = cell.text.strip()
+                full_text += cell_text + '\n'
     placeholders = re.findall(r'\[([^\[\]]+)\]', full_text)
     placeholdersData = {item: item for item in placeholders}
     conn = getConnection()
@@ -239,6 +244,8 @@ def replace_placeholders_in_paragraph(paragraph, replacements):
     else:
         paragraph.add_run(full_text)
 
+def replace_placeholders(text, data):
+    return re.sub(r'\[([^\[\]]+)\]', lambda m: data.get(m.group(1), m.group(0)), text)
 
 def generateProtectedPDF(caseType, TemplateType, replacements):
     conn = getConnection()
@@ -257,6 +264,12 @@ def generateProtectedPDF(caseType, TemplateType, replacements):
     doc = Document(doc_stream)
     for para in doc.paragraphs:
         replace_placeholders_in_paragraph(para, replacements)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    replace_placeholders_in_paragraph(para, replacements)
+
     today_date = datetime.now().strftime("%Y%m%d%H%M%S%f")[:-3]
     mainPath = os.path.join(os.getcwd(), 'temp')
     if not os.path.exists(mainPath):
