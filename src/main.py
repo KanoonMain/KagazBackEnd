@@ -10,7 +10,7 @@ from werkzeug.datastructures import FileStorage
 from flask_jwt_extended import JWTManager, get_jwt_identity, jwt_required
 from flask_bcrypt import Bcrypt
 from flask import  redirect
-
+from kanoon_db import requestDataDelete
 from userOperations import userRegister, userLogin, userCredits, rechargeCredits, userUpdatePassword, userOrders, userOrderRegenerate, initiatePhonePePayment, verify_payment
 app = Flask(__name__)
 CORS(app)
@@ -26,7 +26,7 @@ from template import getCatergoryDropDownData, getTemplateFeilds, generateProtec
     extractDataItems, getDatafromTable, updateRecordInTable, getDataSet, checkUserBalance
 
 ns = api.namespace('template', description='Template operations')
-
+kn = api.namespace('kanoon', description='Kanoon DB operations')
 # Models for Swagger docs
 update_model = api.model('UpdateModel', {
     'updateData': fields.Raw(required=True, description='Fields to update'),
@@ -308,6 +308,17 @@ class TableDataUserCreditRechargeCallback(Resource):
                 return "Missing transactionId", 400
             # Redirect to frontend GET page
             return redirect(f"https://kagaz.ruaaventures.com/payment-status?transactionId={transaction_id}")
+            return {'message': 'Request Created' }, 200
+        except Exception as e:
+            return {'message': 'Request Creation failed', 'error': str(e)}
+
+@kn.route('/request-deletion')
+class TableDeleteUserData(Resource):
+    def post(self):
+        try:
+            data = api.payload
+            res = requestDataDelete(data)
+            return {'message': 'Request Created', 'id': res }, 200
         except Exception as e:
             return f"Error: {str(e)}", 500
 if __name__ == '__main__':
