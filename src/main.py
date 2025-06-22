@@ -320,6 +320,6 @@ class TableDeleteUserData(Resource):
             res = requestDataDelete(data)
             return {'message': 'Request Created', 'id': res }, 200
         except Exception as e:
-            return f"Error: {str(e)}", 500
+            return {'message': 'Request Failed', 'id': e }, 500
 if __name__ == '__main__':
     app.run(debug=True)
